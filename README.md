@@ -282,8 +282,12 @@ mpremote cp www/sounds/p1.mp3 :www/sounds/p1.mp3
 # ... (各ファイル)
 ```
 
-### 5. config.json 編集
-Wi-Fi SSIDとパスワードを設定
+### 5. config.json 作成・編集
+```bash
+cp config.json.example config.json
+```
+`config.json` を編集してWi-Fi SSID・パスワード等を設定。  
+※ `config.json` は `.gitignore` で管理対象外（秘密情報を含むため）
 
 ### 6. 起動
 USB電源を接続すると自動起動。IPアドレスはDiscordまたは `/setup` 画面で確認。
