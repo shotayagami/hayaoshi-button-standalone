@@ -1,5 +1,5 @@
 # TFT Display Controller for Hayaoshi Button System
-# Renders game state on ST7789 240x320 TFT via SPI.
+# Renders game state on ILI9341 240x320 TFT via SPI.
 # Requires MCP23017 (host buttons on I2C frees GP18-22 for SPI).
 
 import framebuf
