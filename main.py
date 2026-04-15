@@ -10,7 +10,7 @@ from microdot.websocket import with_websocket
 
 Request.max_content_length = 200 * 1024  # 200KB
 # max_body_length stays at 16KB - larger files use streaming
-from machine import I2C, Pin
+from machine import I2C, Pin, SPI
 from buttons import ButtonManager
 from game import GameEngine
 from ws_manager import WSManager
@@ -127,6 +127,36 @@ try:
 except Exception as e:
     print(f"MCP23017: init failed ({e}), using direct GPIO")
 
+# Initialize TFT display (requires MCP23017 to free GP18-22 for SPI)
+display = None
+touch = None
+if mcp:
+    try:
+        from ili9341 import ILI9341
+        from display_tft import DisplayTFT
+        spi0 = SPI(0, baudrate=40_000_000, polarity=0, phase=0,
+                    sck=Pin(18), mosi=Pin(19))
+        tft = ILI9341(
+            spi0,
+            cs=Pin(22, Pin.OUT),
+            dc=Pin(20, Pin.OUT),
+            rst=Pin(21, Pin.OUT),
+            width=240, height=320,
+        )
+        tft.init()
+        display = DisplayTFT(tft)
+        display.show_boot(ip, wifi_mode)
+        print("TFT Display: ILI9341 240x320 on SPI0 (GP18-22)")
+    except Exception as e:
+        print("TFT Display: init failed ({})".format(e))
+    # Initialize XPT2046 touch (bit-bang SPI via MCP23017 GPB)
+    try:
+        from xpt2046 import XPT2046
+        touch = XPT2046(mcp, width=240, height=320)
+        touch.init()
+    except Exception as e:
+        print("XPT2046: init failed ({})".format(e))
+
 # Initialize components
 num_players = config.get("num_players", 8)
 buttons = ButtonManager(num_players=num_players, mcp=mcp)
@@ -142,6 +172,10 @@ game.set_broadcast(ws_mgr.broadcast)
 game.set_buttons(buttons)
 game.set_dfplayer(dfp)
 game.set_neopixel(neo)
+if display:
+    game.set_display(display)
+if touch:
+    game.set_touch(touch)
 buttons.set_player_callback(game.on_player_press)
 buttons.set_host_callback(game.on_host_press)
 
@@ -321,10 +355,34 @@ async def static_files(req, path):
     content_type = CONTENT_TYPES.get(ext, "application/octet-stream")
     return serve_file(f"www/{path}", content_type)
 
+async def touch_poll_loop():
+    """Poll XPT2046 touch when reset menu is active."""
+    debounce = False
+    while True:
+        if display and display.menu_active and touch and touch.is_ready():
+            if touch.is_touched():
+                if not debounce:
+                    pos = touch.read_pos()
+                    if pos:
+                        action = display.menu_hit_test(pos[0], pos[1])
+                        if action == "cancel":
+                            display.hide_reset_menu(game)
+                        elif action is not None:
+                            await game.handle_touch_menu(action)
+                    debounce = True
+            else:
+                debounce = False
+        await asyncio.sleep(0.05)
+
 async def run():
     await dfp.init()
     asyncio.create_task(buttons.poll_loop())
+    if touch and display:
+        asyncio.create_task(touch_poll_loop())
+        print("Touch polling started.")
     print("Button polling started.")
+    if display:
+        display.refresh(game)
     print("System ready.")
     await app.start_server(host="0.0.0.0", port=80, debug=True)
 

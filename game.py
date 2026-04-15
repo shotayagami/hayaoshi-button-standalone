@@ -47,6 +47,10 @@ class GameEngine:
         self._dfp = None
         # NeoPixel
         self._neopixel = None
+        # TFT Display
+        self._display = None
+        # Touch controller
+        self._touch = None
 
     def set_broadcast(self, callback):
         self._broadcast = callback
@@ -59,6 +63,12 @@ class GameEngine:
 
     def set_neopixel(self, neopixel):
         self._neopixel = neopixel
+
+    def set_display(self, display):
+        self._display = display
+
+    def set_touch(self, touch):
+        self._touch = touch
 
     def set_save_config(self, callback):
         """callback(key, value) - saves to config.json"""
@@ -147,6 +157,9 @@ class GameEngine:
         # Update lamp state
         self._update_lamps()
 
+        if self._display:
+            self._display.on_press(self)
+
         await self._broadcast_msg(
             protocol.make_press_msg(player_id, order, timestamp_us, is_first)
         )
@@ -158,6 +171,8 @@ class GameEngine:
         elif button_name == "incorrect":
             await self.judge(protocol.RESULT_INCORRECT)
         elif button_name == "reset":
+            if self._display and self._touch:
+                self._display.show_reset_menu()
             await self._broadcast_msg({"type": "show_reset_dialog"})
         elif button_name == "arm":
             await self.arm()
@@ -206,6 +221,9 @@ class GameEngine:
                     self._neopixel.flash_led(answerer_id, color, times=20, interval_ms=75)
                 )
 
+            if self._display:
+                self._display.on_judge(result, answerer_id, delta, self)
+
             await self._broadcast_msg(
                 protocol.make_judgment_msg(result, answerer_id, player["score"], delta)
             )
@@ -230,6 +248,9 @@ class GameEngine:
                 self._pressed_set.discard(self._last_wrong_id)
             self._last_wrong_id = answerer_id
 
+            if self._display:
+                self._display.on_judge(result, answerer_id, delta, self)
+
             await self._broadcast_msg(
                 protocol.make_judgment_msg(result, answerer_id, player["score"], delta)
             )
@@ -244,6 +265,8 @@ class GameEngine:
                 # Next person in queue
                 self._update_lamps()
                 next_id = self.press_order[self._answerer_idx][0]
+                if self._display:
+                    self._display.on_next_answerer(self)
                 await self._broadcast_msg({
                     "type": "next_answerer",
                     "player_id": next_id,
@@ -254,6 +277,8 @@ class GameEngine:
                 self.state = protocol.STATE_SHOWING_RESULT
                 if self._buttons:
                     self._buttons.all_lamps_off()
+                if self._display:
+                    self._display.on_idle(self)
                 await self._broadcast_msg({
                     "type": "no_answerer",
                 })
@@ -302,6 +327,8 @@ class GameEngine:
             self._buttons.stop_blink()
             self._buttons.all_lamps_off()
         self._update_neopixels()
+        if self._display:
+            self._display.on_idle(self)
 
         await self._broadcast_msg(protocol.make_reset_msg(self.state))
 
@@ -318,6 +345,8 @@ class GameEngine:
             self._buttons.stop_blink()
             self._buttons.all_lamps_off()
         self._update_neopixels()
+        if self._display:
+            self._display.on_idle(self)
 
         await self._broadcast_msg(protocol.make_reset_msg(self.state))
 
@@ -339,6 +368,8 @@ class GameEngine:
             self._buttons.stop_blink()
             self._buttons.all_lamps_off()
         self._update_neopixels()
+        if self._display:
+            self._display.on_arm(self)
 
         await self._broadcast_msg(protocol.make_reset_msg(self.state))
         await self._broadcast_msg(self.get_state_msg())
@@ -428,17 +459,40 @@ class GameEngine:
     async def reset_scores(self):
         for p in self.players:
             p["score"] = 0
+        if self._display:
+            self._display.on_scores_update(self)
         await self._broadcast_msg(self.get_state_msg())
 
     async def reset_round(self):
         self.round = 0
         await self._broadcast_msg(self.get_state_msg())
 
+    async def handle_touch_menu(self, action):
+        """Execute a touch menu action and close menu."""
+        if action == "reset":
+            await self.reset()
+        elif action == "clear_penalty":
+            await self.clear_penalty()
+        elif action == "reset_scores":
+            await self.reset_scores()
+        elif action == "reset_round":
+            await self.reset_round()
+        elif action == "reset_all":
+            await self.reset_scores()
+            await self.clear_penalty()
+            await self.reset_round()
+            await self.reset()
+        # Close menu and restore display
+        if self._display:
+            self._display.hide_reset_menu(self)
+
     # Admin actions
 
     async def set_player_name(self, player_id, name):
         if 0 <= player_id < self.num_players:
             self.players[player_id]["name"] = name
+            if self._display:
+                self._display.on_scores_update(self)
             await self._broadcast_msg(
                 protocol.make_player_update_msg(
                     player_id, name, self.players[player_id]["score"]
@@ -448,6 +502,8 @@ class GameEngine:
     async def set_player_score(self, player_id, score):
         if 0 <= player_id < self.num_players:
             self.players[player_id]["score"] = score
+            if self._display:
+                self._display.on_scores_update(self)
             await self._broadcast_msg(
                 protocol.make_player_update_msg(
                     player_id, self.players[player_id]["name"], score
