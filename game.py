@@ -45,6 +45,8 @@ class GameEngine:
         self._save_config = None
         # DFPlayer
         self._dfp = None
+        # NeoPixel
+        self._neopixel = None
 
     def set_broadcast(self, callback):
         self._broadcast = callback
@@ -54,6 +56,9 @@ class GameEngine:
 
     def set_dfplayer(self, dfp):
         self._dfp = dfp
+
+    def set_neopixel(self, neopixel):
+        self._neopixel = neopixel
 
     def set_save_config(self, callback):
         """callback(key, value) - saves to config.json"""
@@ -95,14 +100,20 @@ class GameEngine:
         answerer = self.get_current_answerer()
         for i, (pid, _) in enumerate(self.press_order):
             if pid == answerer:
-                # Current answerer: full brightness
                 self._buttons.lamp_full(pid)
             elif i > self._answerer_idx:
-                # Waiting: dim
                 self._buttons.lamp_dim(pid)
             else:
-                # Already answered (incorrect): off
                 self._buttons.lamp_off(pid)
+        self._update_neopixels()
+
+    def _update_neopixels(self):
+        if self._neopixel:
+            self._neopixel.update_from_game(
+                self.state, self.colors, self.press_order,
+                self.get_current_answerer(), self.num_players,
+                self._answerer_idx,
+            )
 
     # Button event handlers
 
@@ -187,6 +198,12 @@ class GameEngine:
                 self._buttons.all_lamps_off()
                 asyncio.create_task(
                     self._buttons.flash_lamp(answerer_id, times=20, interval_ms=75)
+                )
+            if self._neopixel:
+                self._neopixel.clear()
+                color = self.colors[answerer_id] if answerer_id < len(self.colors) else "#ffffff"
+                asyncio.create_task(
+                    self._neopixel.flash_led(answerer_id, color, times=20, interval_ms=75)
                 )
 
             await self._broadcast_msg(
@@ -284,6 +301,7 @@ class GameEngine:
         if self._buttons:
             self._buttons.stop_blink()
             self._buttons.all_lamps_off()
+        self._update_neopixels()
 
         await self._broadcast_msg(protocol.make_reset_msg(self.state))
 
@@ -299,6 +317,7 @@ class GameEngine:
         if self._buttons:
             self._buttons.stop_blink()
             self._buttons.all_lamps_off()
+        self._update_neopixels()
 
         await self._broadcast_msg(protocol.make_reset_msg(self.state))
 
@@ -319,6 +338,7 @@ class GameEngine:
         if self._buttons:
             self._buttons.stop_blink()
             self._buttons.all_lamps_off()
+        self._update_neopixels()
 
         await self._broadcast_msg(protocol.make_reset_msg(self.state))
         await self._broadcast_msg(self.get_state_msg())

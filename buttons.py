@@ -10,8 +10,20 @@ class ButtonManager:
     BRIGHTNESS_DIM = 6500
     BRIGHTNESS_OFF = 0
 
-    def __init__(self, num_players=8):
+    # Host button name -> MCP23017 GPA bit mapping
+    HOST_BUTTON_BITS = {
+        "correct": 0,
+        "incorrect": 1,
+        "reset": 2,
+        "arm": 3,
+        "stop": 4,
+        "jingle": 5,
+        "countdown": 6,
+    }
+
+    def __init__(self, num_players=8, mcp=None):
         self.num_players = num_players
+        self._mcp = mcp
 
         # Player buttons (active LOW with pull-up)
         # GP0-GP3, GP26, GP27, GP6, GP7 (GP4/GP5 reserved for UART1/DFPlayer)
@@ -28,22 +40,28 @@ class ButtonManager:
             pwm.duty_u16(0)
             self.lamp_pwms.append(pwm)
 
-        # Host buttons
-        self.host_pins = {
-            "correct": Pin(16, Pin.IN, Pin.PULL_UP),
-            "incorrect": Pin(17, Pin.IN, Pin.PULL_UP),
-            "reset": Pin(18, Pin.IN, Pin.PULL_UP),
-            "arm": Pin(19, Pin.IN, Pin.PULL_UP),
-            "stop": Pin(20, Pin.IN, Pin.PULL_UP),
-            "jingle": Pin(21, Pin.IN, Pin.PULL_UP),
-            "countdown": Pin(22, Pin.IN, Pin.PULL_UP),
-        }
+        # Host buttons: MCP23017 or direct GPIO
+        if mcp:
+            self.host_pins = None
+            print("ButtonManager: host buttons via MCP23017")
+        else:
+            self.host_pins = {
+                "correct": Pin(16, Pin.IN, Pin.PULL_UP),
+                "incorrect": Pin(17, Pin.IN, Pin.PULL_UP),
+                "reset": Pin(18, Pin.IN, Pin.PULL_UP),
+                "arm": Pin(19, Pin.IN, Pin.PULL_UP),
+                "stop": Pin(20, Pin.IN, Pin.PULL_UP),
+                "jingle": Pin(21, Pin.IN, Pin.PULL_UP),
+                "countdown": Pin(22, Pin.IN, Pin.PULL_UP),
+            }
+            print("ButtonManager: host buttons via direct GPIO")
 
         # Debounce tracking
         self._player_last_us = [0] * num_players
-        self._player_prev = [1] * num_players  # Previous state (1=released)
-        self._host_last_us = {k: 0 for k in self.host_pins}
-        self._host_prev = {k: 1 for k in self.host_pins}
+        self._player_prev = [1] * num_players
+        host_names = list(self.HOST_BUTTON_BITS.keys())
+        self._host_last_us = {k: 0 for k in host_names}
+        self._host_prev = {k: 1 for k in host_names}
 
         # Flash task tracking
         self._flash_task = None
@@ -82,11 +100,9 @@ class ButtonManager:
         self.lamp_full(player_id)
 
     def start_blink(self, player_id, interval_ms=300):
-        """Now used as lamp_full (answerer = bright)"""
         self.lamp_full(player_id)
 
     def stop_blink(self):
-        """No-op since we no longer blink"""
         pass
 
     async def flash_lamp(self, player_id, times=3, interval_ms=200):
@@ -112,15 +128,29 @@ class ButtonManager:
                         if self._on_player_press:
                             await self._on_player_press(i, now)
 
-            # Poll host buttons (edge detection: trigger once on press)
-            for name, pin in self.host_pins.items():
-                val = pin.value()
-                prev = self._host_prev[name]
-                self._host_prev[name] = val
-                if val == 0 and prev == 1:  # falling edge: just pressed
-                    if time.ticks_diff(now, self._host_last_us[name]) > self.DEBOUNCE_US:
-                        self._host_last_us[name] = now
-                        if self._on_host_press:
-                            await self._on_host_press(name)
+            # Poll host buttons
+            if self._mcp:
+                # MCP23017: read all bits at once
+                port_val = self._mcp.read_port_a()
+                for name, bit in self.HOST_BUTTON_BITS.items():
+                    val = (port_val >> bit) & 1
+                    prev = self._host_prev[name]
+                    self._host_prev[name] = val
+                    if val == 0 and prev == 1:
+                        if time.ticks_diff(now, self._host_last_us[name]) > self.DEBOUNCE_US:
+                            self._host_last_us[name] = now
+                            if self._on_host_press:
+                                await self._on_host_press(name)
+            else:
+                # Direct GPIO
+                for name, pin in self.host_pins.items():
+                    val = pin.value()
+                    prev = self._host_prev[name]
+                    self._host_prev[name] = val
+                    if val == 0 and prev == 1:
+                        if time.ticks_diff(now, self._host_last_us[name]) > self.DEBOUNCE_US:
+                            self._host_last_us[name] = now
+                            if self._on_host_press:
+                                await self._on_host_press(name)
 
             await asyncio.sleep(0.001)

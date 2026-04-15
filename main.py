@@ -10,10 +10,13 @@ from microdot.websocket import with_websocket
 
 Request.max_content_length = 200 * 1024  # 200KB
 # max_body_length stays at 16KB - larger files use streaming
+from machine import I2C, Pin
 from buttons import ButtonManager
 from game import GameEngine
 from ws_manager import WSManager
 from dfplayer import DFPlayer
+from mcp23017 import MCP23017
+from neopixel_ctrl import NeoPixelController
 import protocol
 
 
@@ -111,9 +114,22 @@ def notify_discord(ip_addr):
 
 notify_discord(ip)
 
+# Initialize MCP23017 for host buttons
+mcp = None
+try:
+    i2c0 = I2C(0, sda=Pin(16), scl=Pin(17), freq=400_000)
+    mcp_addr = MCP23017.scan(i2c0)
+    if mcp_addr:
+        mcp = MCP23017(i2c0, mcp_addr)
+        mcp.init()
+    else:
+        print("MCP23017: not found, using direct GPIO")
+except Exception as e:
+    print(f"MCP23017: init failed ({e}), using direct GPIO")
+
 # Initialize components
 num_players = config.get("num_players", 8)
-buttons = ButtonManager(num_players=num_players)
+buttons = ButtonManager(num_players=num_players, mcp=mcp)
 ws_mgr = WSManager()
 game = GameEngine(
     num_players=num_players,
@@ -121,9 +137,11 @@ game = GameEngine(
     points_incorrect=config.get("points_incorrect", -5),
 )
 dfp = DFPlayer()
+neo = NeoPixelController(pin_num=28, num_leds=num_players)
 game.set_broadcast(ws_mgr.broadcast)
 game.set_buttons(buttons)
 game.set_dfplayer(dfp)
+game.set_neopixel(neo)
 buttons.set_player_callback(game.on_player_press)
 buttons.set_host_callback(game.on_host_press)
 
