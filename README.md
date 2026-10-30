@@ -47,7 +47,7 @@ Raspberry Pi Pico 2 W を使用したイベント用早押しボタンシステ�
 - 一括判定モード（書き問題用、着順ポイント対応）
 - 出題ジングル再生
 - サーバー駆動10秒カウントダウンタイマー（フェードアウト対応）
-- 音声再生先切替（管理画面/表示画面/両方）
+- 音声出力先切替（管理画面/表示画面/DFPlayerを個別に設定）
 - 音声ファイルのプリロード（低遅延再生）
 - 管理画面からの音源アップロード
 - 回答履歴テーブル（問題種別・着順・正誤・ペナルティ・スルー記録）
@@ -251,7 +251,7 @@ IDLE ────────→ ARMED ────────→ JUDGING ─�
 | `countdown_tick` | カウントダウン毎秒 | value |
 | `colors_update` | カラー変更通知 | colors[] |
 | `show_reset_dialog` | リセットダイアログ表示 | - |
-| `audio_mode` | 音声再生先変更 | mode ("admin"/"display"/"both") |
+| `audio_mode` | 音声出力先変更 | display (bool) |
 
 ### Client → Server (C2S)
 
@@ -272,7 +272,7 @@ IDLE ────────→ ARMED ────────→ JUDGING ─�
 | `settings` | ゲーム設定変更 | (下記参照) |
 | `jingle` | ジングル再生指示 | - |
 | `countdown` | カウントダウン開始指示 | - |
-| `audio_mode` | 音声再生先変更 | mode |
+| `audio_mode` | 音声出力先変更 | display (bool), dfplayer (bool) |
 
 ### settings メッセージのフィールド
 
@@ -344,7 +344,7 @@ IDLE ────────→ ARMED ────────→ JUDGING ─�
 - 設定: プレイヤー人数、ポイント、各種オプション
 - 音源管理: ファイルアップロード
 - 回答履歴テーブル（問題種別・着順・正誤・ペナルティ・スルー）
-- 音声再生先切替（管理画面/表示画面/両方）
+- 音声出力先切替（管理画面/表示画面/DFPlayerを個別に設定）
 - リセットダイアログ（受付停止/ペナルティ解除/スコアリセット/問題番号リセット/全リセット）
 
 ### 表示画面 (`/`)
@@ -385,6 +385,8 @@ pip install mpremote
 
 ### 3. microdot ライブラリ配置
 
+必要なファイルはリポジトリの `lib/microdot/` に含まれています。次のコマンドは、必要な場合に GitHub からライブラリを取得して更新するときに使います。
+
 ```
 curl -sL https://raw.githubusercontent.com/miguelgrinberg/microdot/main/src/microdot/microdot.py -o lib/microdot/microdot.py
 curl -sL https://raw.githubusercontent.com/miguelgrinberg/microdot/main/src/microdot/websocket.py -o lib/microdot/websocket.py
@@ -407,7 +409,6 @@ mpremote cp lib/microdot/websocket.py :lib/microdot/websocket.py
 mpremote cp lib/microdot/helpers.py :lib/microdot/helpers.py
 
 # アプリケーション
-mpremote cp config.json :config.json
 mpremote cp boot.py :boot.py
 mpremote cp main.py :main.py
 mpremote cp wifi.py :wifi.py
@@ -443,6 +444,12 @@ cp config.json.example config.json
 
 `config.json` を編集してWi-Fi SSID・パスワード等を設定。
 ※ `config.json` は `.gitignore` で管理対象外（秘密情報を含むため）
+
+設定後、次のコマンドで Pico に転送する。
+
+```bash
+mpremote cp config.json :config.json
+```
 
 ### 6. 起動
 USB電源を接続すると自動起動。IPアドレスはDiscordまたは `/setup` 画面で確認。
@@ -505,7 +512,7 @@ mpremote cp main.py :main.py && mpremote cp game.py :game.py && mpremote cp butt
 ### MicroPython / Webサーバー
 
 - **asyncio.sleep_ms() は使用不可**: MicroPython 1.28 + Pico 2 W 環境では `asyncio.sleep(0.001)` を使用
-- **microdot は mip 非対応**: GitHub から手動ダウンロードが必要
+- **microdot**: `mip` ではなく、同梱の `lib/microdot/` を使用。更新方法は手順3を参照
 - **mpremote run vs ファイル転送**: `mpremote run` はデバッグ用、本番は `main.py` をPicoに転送してスタンドアロン実行
 - **ルート定義順序**: microdot では `/ws` を `/<path:path>` より先に定義する必要がある
 - **app.run() vs asyncio.run()**: ボタンポーリングとWebサーバーを並行実行するため `asyncio.run()` + `app.start_server()` を使用
